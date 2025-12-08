@@ -15,7 +15,7 @@ struct Cell
 static void DrawTextCentered(Font font, const char *text, Vector2 center, float size, float spacing, Color tint)
 {
     Vector2 m = MeasureTextEx(font, text, size, spacing);
-    Vector2 pos = {center.x - m.x * 0.5f, center.y - m.y * 0.55f};
+    Vector2 pos = {center.x - m.x * 0.5f, center.y - m.y * 0.5f};
     DrawTextEx(font, text, pos, size, spacing, tint);
 }
 
@@ -26,52 +26,67 @@ enum class AnchorSide
     Right
 };
 
-static void DrawTokenAnchored(Texture2D tex, Rectangle tile, float maxFracW, float maxFracH, float pad, AnchorSide side, Color tint)
+static void DrawTokenAnchored(Texture2D tex,
+                              Rectangle tile,
+                              float maxFracW, float maxFracH,
+                              float pad,
+                              AnchorSide side,
+                              Color tint)
 {
-    float maxW = tile.width * maxFracW;
-    float maxH = tile.height * maxFracH;
-    float dw, dh;
+    float availW = tile.width - 2.0f * pad;
+    float availH = tile.height - 2.0f * pad;
+    float wantedW = availW * maxFracW;
+    float wantedH = availH * maxFracH;
+    float scale = 1.0f;
+
     if (tex.id != 0)
     {
-        float tw = (float)tex.width, th = (float)tex.height;
-        float scale = fminf(maxW / tw, maxH / th);
-        dw = tw * scale;
-        dh = th * scale;
+        float sx = wantedW / (float)tex.width;
+        float sy = wantedH / (float)tex.height;
+        scale = (sx < sy) ? sx : sy;
     }
-    else
-    {
-        dw = maxW;
-        dh = maxH;
-    }
-
-    float cx = (side == AnchorSide::Left)    ? (tile.x + pad + dw * 0.5f)
-               : (side == AnchorSide::Right) ? (tile.x + tile.width - pad - dw * 0.5f)
-                                             : (tile.x + tile.width * 0.5f);
-    float cy = tile.y + tile.height * 0.5f;
 
     if (tex.id == 0)
     {
-        DrawCircleV({cx, cy}, fminf(dw, dh) * 0.45f, tint);
+        float radius = (wantedH < wantedW ? wantedH : wantedW) * 0.4f;
+        float cx = tile.x + tile.width * 0.5f;
+        if (side == AnchorSide::Left)
+            cx = tile.x + tile.width * 0.3f;
+        else if (side == AnchorSide::Right)
+            cx = tile.x + tile.width * 0.7f;
+        float cy = tile.y + tile.height * 0.5f;
+        DrawCircleV(Vector2{cx, cy}, radius, tint);
         return;
     }
 
+    float w = tex.width * scale;
+    float h = tex.height * scale;
+    float cx = tile.x + tile.width * 0.5f;
+    if (side == AnchorSide::Left)
+        cx = tile.x + tile.width * 0.3f;
+    else if (side == AnchorSide::Right)
+        cx = tile.x + tile.width * 0.7f;
+    float cy = tile.y + tile.height * 0.5f;
+
     Rectangle src = {0, 0, (float)tex.width, (float)tex.height};
-    Rectangle dst = {cx - dw / 2.0f, cy - dh / 2.0f, dw, dh};
-    DrawTexturePro(tex, src, dst, {0, 0}, 0.0f, tint);
+    Rectangle dst = {cx - w * 0.5f, cy - h * 0.5f, w, h};
+    Vector2 origin = {0, 0};
+    DrawTexturePro(tex, src, dst, origin, 0.0f, tint);
 }
 
-// Build AND/OR/XOR grid once into the provided buffer
 static void BuildGrid(int d0, int d1, int d2, int grid[3][3])
 {
     int A0 = d0, A1 = d0, A2 = d1;
     int B0 = d1, B1 = d2, B2 = d2;
-    grid[0][0] = A0 & B0;
+
+    grid[0][0] = A0 & B0; // AND
     grid[1][0] = A1 & B1;
-    grid[2][0] = A2 & B2; // AND
-    grid[0][1] = A0 | B0;
+    grid[2][0] = A2 & B2;
+
+    grid[0][1] = A0 | B0; // OR
     grid[1][1] = A1 | B1;
     grid[2][1] = A2 | B2; // OR
-    grid[0][2] = A0 ^ B0;
+    grid[0][2] = A0 ^ B0; // XOR
     grid[1][2] = A1 ^ B1;
     grid[2][2] = A2 ^ B2; // XOR
 }
@@ -80,12 +95,11 @@ static bool ChoiceToRowCol(int choice, int &row, int &col)
 {
     if (choice < 1 || choice > 9)
         return false;
-    row = (choice - 1) % 3; // 1..9 mapped column-major
+    row = (choice - 1) % 3;
     col = (choice - 1) / 3;
     return true;
 }
 
-// Strong key-capture for first keystroke: only IsKeyPressed() checks.
 static int GetDigitPressedStrong()
 {
     if (IsKeyPressed(KEY_ONE))
@@ -111,19 +125,9 @@ static int GetDigitPressedStrong()
 
 int main()
 {
-    InitWindow(DESIGN_W, DESIGN_H, "Bitwise Dice Duel - project2.cpp");
+    // Fixed-size window: no dynamic scaling or camera. Designed for 1440x900.
+    InitWindow(DESIGN_W, DESIGN_H, "Bitwise Dice Duel - project.cpp");
     SetTargetFPS(60);
-    int mon = GetCurrentMonitor();
-    SetWindowSize(GetMonitorWidth(mon), GetMonitorHeight(mon));
-
-    float uiScale = fminf(GetScreenWidth() / (float)DESIGN_W, GetScreenHeight() / (float)DESIGN_H);
-    float offX = (GetScreenWidth() - DESIGN_W * uiScale) * 0.5f;
-    float offY = (GetScreenHeight() - DESIGN_H * uiScale) * 0.5f;
-
-    Camera2D cam{};
-    cam.target = {0, 0};
-    cam.offset = {offX, offY};
-    cam.zoom = uiScale;
 
     Font ui = GetFontDefault();
     Texture2D texPlayer = LoadTexture("player.png");
@@ -142,7 +146,6 @@ int main()
 
     // Shift the centered block (instructions + dice) left by an offset
     const float blockOffsetX = -180.0f; // negative = left shift
-    // Updated instruction text (use hyphen '-')
     const char *instructions = "Press 1-9 to choose a cell.";
     float instrSize = 20.0f;
     Vector2 instrM = MeasureTextEx(ui, instructions, instrSize, 1);
@@ -158,16 +161,16 @@ int main()
     {
         Rectangle r = {x, y, dieW, dieH};
         DrawRectangleRec(r, Color{45, 45, 52, 255});
-        DrawRectangleLinesEx(r, 2.0f, Color{140, 140, 150, 255});
+        DrawRectangleLines((int)r.x, (int)r.y, (int)r.width, (int)r.height, Color{90, 90, 100, 255});
         if (value > 0)
         {
-            char t[4];
+            char t[8];
             std::snprintf(t, sizeof(t), "%d", value);
             DrawTextCentered(f, t, {x + dieW / 2, y + dieH / 2}, 24, 1, RAYWHITE);
         }
     };
 
-    // Die combinations layout (no background window now)
+    // Die combinations layout
     const char *colHdr[3] = {"AND", "OR", "XOR"};
     float optionsOuterW = 560.0f; // layout width
     float optionsOuterX = DESIGN_W - 160.0f - optionsOuterW;
@@ -192,52 +195,86 @@ int main()
     const float innerTop = DESIGN_H - boardH;
     const float innerBottom = DESIGN_H - bottomMargin;
     const float innerH = innerBottom - innerTop;
+    const float centerYBoard = innerTop + innerH * 0.5f;
 
-    const float cellW = 150.0f;
-    const float cellH = 86.0f;
-    const float tokenPad = cellW * 0.06f;
+    float rowStep = (innerH - 80.0f) / (rows + 1);
+    float colStep = (boardW - 280.0f) / (cols - 1);
 
-    const float bottomCenterY = innerBottom - cellH * 0.5f;
-    const float rowStep = (innerH - cellH) / 5;
-    const float leftCenterX = (DESIGN_W - boardW) * 0.5f + cellW * 0.5f;
-    const float firstColLeft = leftCenterX - cellW * 0.5f; // align Start left edge
-    const float colStep = (boardW - cellW) / (cols - 1);
+    float leftCenterX = 140.0f;
+    float bottomCenterY = innerBottom - 30.0f;
 
     std::vector<Cell> cells(totalCells);
-    cells[0] = {leftCenterX, bottomCenterY};
-    int idx = 1;
-    for (int r = 0; r < rows; ++r)
+    cells[0].cx = leftCenterX;
+    cells[0].cy = bottomCenterY;
+
     {
-        float cy = bottomCenterY - (r + 1) * rowStep;
-        bool leftToRight = (r % 2 == 0);
-        if (leftToRight)
+        int idx = 1;
+        for (int r = 0; r < rows; ++r)
         {
-            for (int c = 0; c < cols && idx < totalCells; ++c)
-                cells[idx++] = {leftCenterX + c * colStep, cy};
-        }
-        else
-        {
-            for (int c = cols - 1; c >= 0 && idx < totalCells; --c)
-                cells[idx++] = {leftCenterX + c * colStep, cy};
+            float cy = bottomCenterY - (r + 1) * rowStep;
+            bool leftToRight = (r % 2 == 0);
+            if (leftToRight)
+            {
+                for (int c = 0; c < cols && idx < totalCells; ++c)
+                {
+                    cells[idx].cx = leftCenterX + c * colStep;
+                    cells[idx].cy = cy;
+                    ++idx;
+                }
+            }
+            else
+            {
+                for (int c = cols - 1; c >= 0 && idx < totalCells; --c)
+                {
+                    cells[idx].cx = leftCenterX + c * colStep;
+                    cells[idx].cy = cy;
+                    ++idx;
+                }
+            }
         }
     }
 
-    // State
-    int playerIdx = 0, aiIdx = 0;
-    bool playerWon = false, aiWon = false;
+    // Lambda instead of nested function
+    auto GetTileRect = [&](int index) -> Rectangle
+    {
+        const float tileH = 64.0f;
+        const float tileW = 85.0f;
+        const float startW = 120.0f;
+
+        if (index == 0)
+        {
+            float x = cells[0].cx - startW * 0.5f;
+            float y = cells[0].cy - tileH * 0.5f;
+            return Rectangle{x, y, startW, tileH};
+        }
+        else
+        {
+            Cell c = cells[index];
+            float x = c.cx - tileW * 0.5f;
+            float y = c.cy - tileH * 0.5f;
+            return Rectangle{x, y, tileW, tileH};
+        }
+    };
+
+    int playerIdx = 0;
+    int aiIdx = 0;
+    bool playerWon = false;
+    bool aiWon = false;
 
     int d0 = 0, d1 = 0, d2 = 0;
     auto roll3 = [&]()
-    { d0 = GetRandomValue(1,8); d1 = GetRandomValue(1,8); d2 = GetRandomValue(1,8); };
+    {
+        d0 = GetRandomValue(1, 8);
+        d1 = GetRandomValue(1, 8);
+        d2 = GetRandomValue(1, 8);
+    };
     roll3();
 
-    // Per-frame buffers
     int gridVals[3][3];
     Rectangle optCell[3][3];
 
     while (!WindowShouldClose())
     {
-        // If someone has already won, skip all input/build and show winner screen
         if (playerWon || aiWon)
         {
             BeginDrawing();
@@ -247,7 +284,7 @@ int main()
             Texture2D leftTex = pWon ? texPlayer : texPlayerSad;
             Texture2D rightTex = pWon ? texAISad : texAI;
 
-            int sw = GetScreenWidth(), sh = GetScreenHeight();
+            int sw = DESIGN_W, sh = DESIGN_H;
             float gap = 40.0f;
             float totalW = leftTex.width + gap + rightTex.width;
             float x0 = sw * 0.5f - totalW * 0.5f;
@@ -269,19 +306,20 @@ int main()
             continue;
         }
 
-        // Build current grid & option rects once per frame
         BuildGrid(d0, d1, d2, gridVals);
+
         for (int c = 0; c < gridCols; ++c)
+        {
+            float colX = optionsOuterX + c * (colW + colGap);
             for (int r = 0; r < gridRows; ++r)
             {
-                float x = optionsOuterX + c * (colW + colGap);
-                float y = optionsTopY + r * (cellHtxt + rowGap);
-                float optW = colW * 0.86f;
-                float optH = (cellHtxt + 12.0f) * 1.05f;
-                optCell[r][c] = {x + (colW - optW) * 0.5f, y, optW, optH};
+                float rowY = optionsTopY + 22.0f + r * (34.0f + rowGap);
+                float cellH = 34.0f;
+                Rectangle rc = {colX, rowY, colW, cellH};
+                optCell[r][c] = rc;
             }
+        }
 
-        // INPUT (only when no one has won)
         int chosen = 0;
         int digit = GetDigitPressedStrong();
         if (digit >= 1 && digit <= 9)
@@ -290,9 +328,8 @@ int main()
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
             Vector2 m = GetMousePosition();
-            m.x = (m.x - cam.offset.x) / cam.zoom;
-            m.y = (m.y - cam.offset.y) / cam.zoom;
             for (int c = 0; c < gridCols && chosen == 0; ++c)
+            {
                 for (int r = 0; r < gridRows; ++r)
                 {
                     if (CheckCollisionPointRec(m, optCell[r][c]))
@@ -301,6 +338,7 @@ int main()
                         break;
                     }
                 }
+            }
         }
 
         if (chosen >= 1 && chosen <= 9)
@@ -315,23 +353,29 @@ int main()
                     playerIdx = LAST_INDEX;
                     playerWon = true;
                 }
-                if (!playerWon)
+                else
                 {
-                    roll3(); // AI dice
+                    roll3();
                     int aiGrid[3][3];
                     BuildGrid(d0, d1, d2, aiGrid);
                     int bestAI = 0;
                     for (int rr = 0; rr < 3; ++rr)
+                    {
                         for (int cc = 0; cc < 3; ++cc)
+                        {
                             bestAI = std::max(bestAI, aiGrid[rr][cc]);
+                        }
+                    }
                     aiIdx += bestAI;
                     if (aiIdx >= LAST_INDEX)
                     {
                         aiIdx = LAST_INDEX;
                         aiWon = true;
                     }
-                    if (!aiWon)
-                        roll3(); // next turn
+                    else
+                    {
+                        roll3();
+                    }
                 }
             }
         }
@@ -340,21 +384,19 @@ int main()
         BeginDrawing();
         ClearBackground(Color{20, 20, 24, 255});
 
-        BeginMode2D(cam);
-
         // Title & names
         DrawTextEx(ui, "Bitwise Dice Duel", {24, 16}, 32, 2, RAYWHITE);
         DrawTextEx(ui, "Player", {24, 56}, 22, 1, PLAYER_COLOR);
         float playerW = MeasureTextEx(ui, "Player", 22, 1).x;
         DrawTextEx(ui, "A.I.", {24 + 20 + playerW, 56}, 22, 1, AI_COLOR);
 
-        // Instructions (left-shifted) + dice beneath
+        // Instructions + dice beneath
         DrawTextEx(ui, instructions, {instructionX, instructionY}, instrSize, 1, RAYWHITE);
         drawDie(ui, d0, diceInnerX + 0 * (dieW + dieGap), diceBaseY);
         drawDie(ui, d1, diceInnerX + 1 * (dieW + dieGap), diceBaseY);
         drawDie(ui, d2, diceInnerX + 2 * (dieW + dieGap), diceBaseY);
 
-        // Combinations headers + options only (no background window)
+        // Combinations headers + options
         for (int c = 0; c < 3; ++c)
         {
             float cxh = optionsOuterX + c * (colW + colGap) + colW * 0.5f;
@@ -362,53 +404,61 @@ int main()
         }
 
         for (int c = 0; c < gridCols; ++c)
+        {
             for (int r = 0; r < gridRows; ++r)
             {
                 Rectangle cellRect = optCell[r][c];
-                DrawRectangleRec(cellRect, Color{40, 40, 48, 255});
-                DrawRectangleLinesEx(cellRect, 2.0f, Color{120, 120, 130, 255});
-                int choiceNum = c * 3 + r + 1;
+                DrawRectangleRec(cellRect, Color{40, 42, 50, 255});
+                DrawRectangleLines((int)cellRect.x, (int)cellRect.y, (int)cellRect.width, (int)cellRect.height, Color{90, 90, 100, 255});
+
                 int val = gridVals[r][c];
-                char line[64];
-                std::snprintf(line, sizeof(line), "[%d] %d", choiceNum, val);
-                Vector2 ms = MeasureTextEx(ui, line, 20.0f, 1);
-                DrawTextEx(ui, line, {cellRect.x + (cellRect.width - ms.x) / 2.0f, cellRect.y + (cellRect.height - 20.0f) / 2.0f}, 20.0f, 1, RAYWHITE);
-            }
+                int choiceID = c * 3 + r + 1;
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "[%d] %d", choiceID, val);
 
-        // Board tiles
-        auto GetTileRect = [&](int i) -> Rectangle
-        {
-            if (i == 0)
-                return Rectangle{firstColLeft, bottomCenterY - cellH / 2, cellW * 2.0f, cellH};
-            return Rectangle{cells[i].cx - cellW / 2, cells[i].cy - cellH / 2, cellW, cellH};
-        };
-
-        for (int i = 0; i < totalCells; ++i)
-        {
-            Rectangle r = GetTileRect(i);
-            DrawRectangleRec(r, Color{40, 40, 48, 255});
-            DrawRectangleLinesEx(r, 2.0f, Color{160, 160, 170, 255});
-
-            if (i == 0)
-                DrawTextCentered(ui, "Start", {r.x + r.width / 2, r.y + r.height / 2}, cellH * 0.40f, 1, YELLOW);
-            else
-            {
-                char buf[16];
-                if (i < 10)
-                    std::snprintf(buf, sizeof(buf), "0%d", i);
-                else
-                    std::snprintf(buf, sizeof(buf), "%d", i);
-                DrawTextCentered(ui, buf, {r.x + r.width / 2, r.y + r.height / 2}, cellH * 0.40f, 1, RAYWHITE);
+                float textX = cellRect.x + 10.0f;
+                float textY = cellRect.y + (cellRect.height - cellHtxt) * 0.5f;
+                DrawTextEx(ui, buf, {textX, textY}, cellHtxt, 1, RAYWHITE);
             }
         }
 
-        // Draw tokens once
+        float boardAreaTop = innerTop;
+        float boardAreaBottom = innerBottom;
+        float centerLineY = boardAreaTop + (boardAreaBottom - boardAreaTop) * 0.55f;
+        DrawLine(0, (int)centerLineY, DESIGN_W, (int)centerLineY, Color{30, 30, 36, 255});
+
+        for (int i = 0; i < totalCells; ++i)
+        {
+            Rectangle tr = GetTileRect(i);
+            Color fill = Color{35, 35, 42, 255};
+            if (i == 0)
+            {
+                fill = Color{45, 45, 58, 255};
+            }
+            DrawRectangleRec(tr, fill);
+            DrawRectangleLines((int)tr.x, (int)tr.y, (int)tr.width, (int)tr.height, Color{90, 90, 100, 255});
+
+            if (i == 0)
+            {
+                const char *label = "Start";
+                Vector2 tm = MeasureTextEx(ui, label, 22, 1);
+                float tx = tr.x + tr.width * 0.5f - tm.x * 0.5f;
+                float ty = tr.y + tr.height * 0.5f - tm.y * 0.5f;
+                DrawTextEx(ui, label, {tx, ty}, 22, 1, RAYWHITE);
+            }
+            else
+            {
+                char lbl[8];
+                std::snprintf(lbl, sizeof(lbl), "%02d", i);
+                DrawTextCentered(ui, lbl, {tr.x + tr.width * 0.5f, tr.y + tr.height * 0.5f}, 20, 1, Color{220, 220, 230, 255});
+            }
+        }
+
         Rectangle tileP = GetTileRect(playerIdx);
         Rectangle tileA = GetTileRect(aiIdx);
-        DrawTokenAnchored(texPlayer, tileP, 0.48f, 0.76f, tokenPad, AnchorSide::Left, WHITE);
-        DrawTokenAnchored(texAI, tileA, 0.48f, 0.76f, tokenPad, AnchorSide::Right, WHITE);
+        DrawTokenAnchored(texPlayer, tileP, 0.88f, 0.88f, 4.0f, AnchorSide::Left, WHITE);
+        DrawTokenAnchored(texAI, tileA, 0.88f, 0.88f, 4.0f, AnchorSide::Right, WHITE);
 
-        EndMode2D();
         EndDrawing();
     }
 
