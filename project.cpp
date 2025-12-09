@@ -10,26 +10,26 @@ using namespace std;
 // -----------------------------------------------------------------------------
 struct GameState
 {
-    int playerIdx, aiIdx;
+    int playerIndex, aiIndex;
 };
 
 // Evaluation function: positive is good for the AI, negative for the player
 int EvaluateState(const GameState &s)
 {
     // Terminal: AI win / Player win
-    if (s.aiIdx >= 40)
+    if (s.aiIndex >= 40)
         return 10000;
-    if (s.playerIdx >= 40)
+    if (s.playerIndex >= 40)
         return -10000;
 
-    int aiDist = 40 - s.aiIdx;
-    int plDist = 40 - s.playerIdx;
+    int aiDist = 40 - s.aiIndex;
+    int plDist = 40 - s.playerIndex;
 
     // Positive score if AI is closer than the player
     int score = (plDist - aiDist);
 
     // Bonus for having bumped the player back to 0 (and AI not at 0).
-    if (s.playerIdx == 0 && s.aiIdx != 0)
+    if (s.playerIndex == 0 && s.aiIndex != 0)
         score += 500;
 
     return score;
@@ -43,23 +43,23 @@ GameState ApplyMove(const GameState &s, int moveVal, bool aiMoving)
 
     if (aiMoving)
     {
-        ns.aiIdx += moveVal;
-        if (ns.aiIdx >= 40)
-            ns.aiIdx = 40;
+        ns.aiIndex += moveVal;
+        if (ns.aiIndex >= 40)
+            ns.aiIndex = 40;
 
         // AI lands on player -> player back to start
-        if (ns.aiIdx == ns.playerIdx)
-            ns.playerIdx = 0;
+        if (ns.aiIndex == ns.playerIndex)
+            ns.playerIndex = 0;
     }
     else
     {
-        ns.playerIdx += moveVal;
-        if (ns.playerIdx >= 40)
-            ns.playerIdx = 40;
+        ns.playerIndex += moveVal;
+        if (ns.playerIndex >= 40)
+            ns.playerIndex = 40;
 
         // Player lands on AI -> AI back to start
-        if (ns.playerIdx == ns.aiIdx)
-            ns.aiIdx = 0;
+        if (ns.playerIndex == ns.aiIndex)
+            ns.aiIndex = 0;
     }
 
     return ns;
@@ -94,9 +94,9 @@ bool ChoiceToRowCol(int choice, int &row, int &col)
 {
     if (choice < 1 || choice > 9)
         return false;
-    int idx = choice - 1;
-    row = idx / 3; // 0..2
-    col = idx % 3; // 0..2
+    int index = choice - 1;
+    row = index / 3; // 0..2
+    col = index % 3; // 0..2
     return true;
 }
 
@@ -108,7 +108,7 @@ int MinimaxRecursive(const GameState &state, int depth, bool maximizing,
 {
     nodeCount++;
 
-    bool terminal = (state.aiIdx >= 40 || state.playerIdx >= 40);
+    bool terminal = (state.aiIndex >= 40 || state.playerIndex >= 40);
     if (depth == 0 || terminal)
         return EvaluateState(state);
 
@@ -158,9 +158,9 @@ int MinimaxRecursive(const GameState &state, int depth, bool maximizing,
 
 // Choose best A.I. move using Minimax at several depths.
 // Also prints node counts for each depth for rubric instrumentation.
-int ChooseBestAIMove_Minimax(int currentPlayerIdx, int currentAIIdx, const int grid[3][3])
+int ChooseBestAIMove_Minimax(int currentPlayerIndex, int currentAIIndex, const int grid[3][3])
 {
-    GameState root{currentPlayerIdx, currentAIIdx};
+    GameState root{currentPlayerIndex, currentAIIndex};
 
     const int maxDepth = 3; // small but >1 to show growth
     int finalBestMove = 0;
@@ -211,7 +211,7 @@ double EvaluateAIMove_Expecti(const GameState &root, int moveVal, long long &nod
     GameState afterAI = ApplyMove(root, moveVal, true);
     nodeCount++;
 
-    if (afterAI.aiIdx >= 40 || afterAI.playerIdx >= 40)
+    if (afterAI.aiIndex >= 40 || afterAI.playerIndex >= 40)
         return (double)EvaluateState(afterAI);
 
     return ExpectedValueForPlayerTurn(afterAI, nodeCount);
@@ -220,7 +220,7 @@ double EvaluateAIMove_Expecti(const GameState &root, int moveVal, long long &nod
 // Chance + minimizing player: enumerate all player dice triples, let the player pick the move that minimizes the evaluation, and average.
 double ExpectedValueForPlayerTurn(const GameState &state, long long &nodeCount)
 {
-    if (state.aiIdx >= 40 || state.playerIdx >= 40)
+    if (state.aiIndex >= 40 || state.playerIndex >= 40)
     {
         nodeCount++;
         return (double)EvaluateState(state);
@@ -283,10 +283,10 @@ double ExpectedValueForPlayerTurn(const GameState &state, long long &nodeCount)
 
 // Root: choose A.I. move using one-step Expectiminimax.
 // Also prints a node count log for the rubric.
-int ChooseBestAIMove_Expectiminimax(int currentPlayerIdx, int currentAIIdx,
+int ChooseBestAIMove_Expectiminimax(int currentPlayerIndex, int currentAIIndex,
                                     const int grid[3][3])
 {
-    GameState root{currentPlayerIdx, currentAIIdx};
+    GameState root{currentPlayerIndex, currentAIIndex};
     long long nodeCount = 0;
 
     double bestEV = -1e18;
@@ -332,29 +332,29 @@ void Roll3(int &d0, int &d1, int &d2)
 // -----------------------------------------------------------------------------
 void InitSnakeBoard(int board[2][20])
 {
-    int idx = 1;
+    int index = 1;
     for (int r = 0; r < 2; r++)
     {
         bool leftToRight = (r % 2 == 0);
         if (leftToRight)
         {
             for (int c = 0; c < 20; c++)
-                board[r][c] = idx++;
+                board[r][c] = index++;
         }
         else
         {
             for (int c = 19; c >= 0; --c)
-                board[r][c] = idx++;
+                board[r][c] = index++;
         }
     }
 }
 
 // Format a single cell like [05P ], [23 A], [12PA], or [07  ]
-string FormatCell(int index, int playerIdx, int aiIdx)
+string FormatCell(int index, int playerIndex, int aiIndex)
 {
     char buf[6];
-    bool hasP = (playerIdx == index);
-    bool hasA = (aiIdx == index);
+    bool hasP = (playerIndex == index);
+    bool hasA = (aiIndex == index);
 
     if (hasP && hasA)
         snprintf(buf, sizeof(buf), "%02dPA", index);
@@ -371,7 +371,7 @@ string FormatCell(int index, int playerIdx, int aiIdx)
     return s;
 }
 
-void PrintBoard(int playerIdx, int aiIdx)
+void PrintBoard(int playerIndex, int aiIndex)
 {
     int board[2][20];
     InitSnakeBoard(board);
@@ -381,20 +381,20 @@ void PrintBoard(int playerIdx, int aiIdx)
     {
         for (int c = 0; c < 20; c++)
         {
-            int idx = board[r][c];
-            cout << FormatCell(idx, playerIdx, aiIdx) << " ";
+            int index = board[r][c];
+            cout << FormatCell(index, playerIndex, aiIndex) << " ";
         }
         cout << "\n";
     }
     cout << "\nStart tile:\n";
-    cout << FormatCell(0, playerIdx, aiIdx) << "\n\n";
+    cout << FormatCell(0, playerIndex, aiIndex) << "\n\n";
 }
 
 // UI
-void PrintPositions(int playerIdx, int aiIdx)
+void PrintPositions(int playerIndex, int aiIndex)
 {
-    cout << "Player (P) at: " << playerIdx << "    "
-         << "AI (A) at: " << aiIdx << "\n";
+    cout << "Player (P) at: " << playerIndex << "    "
+         << "AI (A) at: " << aiIndex << "\n";
 }
 
 void PrintDiceAndGrid(int d0, int d1, int d2, int grid[3][3])
@@ -422,7 +422,7 @@ int main()
 {
     srand((unsigned int)time(nullptr));
 
-    int playerIdx = 0, aiIdx = 0;
+    int playerIndex = 0, aiIndex = 0;
     bool playerWon = false, aiWon = false;
 
     bool useMinimax = false; // false = Expectiminimax, true = Minimax
@@ -467,8 +467,8 @@ int main()
 
     while (!playerWon && !aiWon)
     {
-        PrintBoard(playerIdx, aiIdx);
-        PrintPositions(playerIdx, aiIdx);
+        PrintBoard(playerIndex, aiIndex);
+        PrintPositions(playerIndex, aiIndex);
 
         cout << "AI mode: " << (useMinimax ? "Minimax" : "Expectiminimax") << "\n\n";
 
@@ -516,22 +516,22 @@ int main()
         int move = gridVals[row][col];
         cout << "You chose cell " << choice << " with move value " << move << ".\n";
 
-        GameState state{playerIdx, aiIdx};
-        int oldAI = state.aiIdx;
+        GameState state{playerIndex, aiIndex};
+        int oldAI = state.aiIndex;
 
         state = ApplyMove(state, move, false); // player move
-        playerIdx = state.playerIdx;
-        aiIdx = state.aiIdx;
+        playerIndex = state.playerIndex;
+        aiIndex = state.aiIndex;
 
-        if (playerIdx >= 40)
+        if (playerIndex >= 40)
         {
-            PrintBoard(playerIdx, aiIdx);
+            PrintBoard(playerIndex, aiIndex);
             cout << "\nYou reached 40! You win!\n";
             playerWon = true;
             break;
         }
 
-        bool playerCapturedAI = (oldAI != 0 && aiIdx == 0 && move > 0);
+        bool playerCapturedAI = (oldAI != 0 && aiIndex == 0 && move > 0);
         if (playerCapturedAI)
         {
             cout << "You landed on the AI. AI is sent back to 0.\n";
@@ -546,30 +546,30 @@ int main()
         int aiMoveVal = 0;
         if (useMinimax)
         {
-            aiMoveVal = ChooseBestAIMove_Minimax(playerIdx, aiIdx, gridVals);
+            aiMoveVal = ChooseBestAIMove_Minimax(playerIndex, aiIndex, gridVals);
             cout << "AI (Minimax) chooses move value: " << aiMoveVal << "\n";
         }
         else
         {
-            aiMoveVal = ChooseBestAIMove_Expectiminimax(playerIdx, aiIdx, gridVals);
+            aiMoveVal = ChooseBestAIMove_Expectiminimax(playerIndex, aiIndex, gridVals);
             cout << "AI (Expectiminimax) chooses move value: " << aiMoveVal << "\n";
         }
 
-        GameState afterAI{playerIdx, aiIdx};
-        int oldPlayer = afterAI.playerIdx;
+        GameState afterAI{playerIndex, aiIndex};
+        int oldPlayer = afterAI.playerIndex;
         afterAI = ApplyMove(afterAI, aiMoveVal, true);
-        playerIdx = afterAI.playerIdx;
-        aiIdx = afterAI.aiIdx;
+        playerIndex = afterAI.playerIndex;
+        aiIndex = afterAI.aiIndex;
 
-        if (aiIdx >= 40)
+        if (aiIndex >= 40)
         {
-            PrintBoard(playerIdx, aiIdx);
+            PrintBoard(playerIndex, aiIndex);
             cout << "\nAI reached 40! AI wins!\n";
             aiWon = true;
             break;
         }
 
-        bool aiCapturedPlayer = (oldPlayer != 0 && playerIdx == 0 && aiMoveVal > 0);
+        bool aiCapturedPlayer = (oldPlayer != 0 && playerIndex == 0 && aiMoveVal > 0);
         if (aiCapturedPlayer)
         {
             cout << "AI landed on you, sending you back to 0.\n";
