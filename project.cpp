@@ -359,7 +359,7 @@ string FormatCell(int index, int playerIndex, int aiIndex)
     if (hasP && hasA)
         snprintf(buf, sizeof(buf), "%02dPA", index);
     else if (hasP)
-        snprintf(buf, sizeof(buf), "%02dP ", index);
+        snprintf(buf, sizeof(buf), "%02d P", index);
     else if (hasA)
         snprintf(buf, sizeof(buf), "%02d A", index);
     else
@@ -391,12 +391,6 @@ void PrintBoard(int playerIndex, int aiIndex)
 }
 
 // UI
-void PrintPositions(int playerIndex, int aiIndex)
-{
-    cout << "Player (P) at: " << playerIndex << "    "
-         << "AI (A) at: " << aiIndex << "\n";
-}
-
 void PrintDiceAndGrid(int d0, int d1, int d2, int grid[3][3])
 {
     cout << "Dice: " << d0 << ", " << d1 << ", " << d2 << "\n\n";
@@ -468,7 +462,8 @@ int main()
     while (!playerWon && !aiWon)
     {
         PrintBoard(playerIndex, aiIndex);
-        PrintPositions(playerIndex, aiIndex);
+        cout << "Player (P) at: " << playerIndex << "    "
+         << "AI (A) at: " << aiIndex << "\n";
 
         cout << "AI mode: " << (useMinimax ? "Minimax" : "Expectiminimax") << "\n\n";
 
