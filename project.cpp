@@ -1,475 +1,584 @@
-#include "raylib.h"
-#include <vector>
-#include <string>
-#include <algorithm>
+#include <iostream>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <string>
 
-static const int DESIGN_W = 1440;
-static const int DESIGN_H = 900;
-
-struct Cell
+using namespace std;
+// -----------------------------------------------------------------------------
+// Game state & evaluation (used by Minimax and Expectiminimax)
+// -----------------------------------------------------------------------------
+struct GameState
 {
-    float cx, cy;
+    int playerIdx, aiIdx;
 };
 
-static void DrawTextCentered(Font font, const char *text, Vector2 center, float size, float spacing, Color tint)
+// Evaluation function: positive is good for the AI, negative for the player
+int EvaluateState(const GameState &s)
 {
-    Vector2 m = MeasureTextEx(font, text, size, spacing);
-    Vector2 pos = {center.x - m.x * 0.5f, center.y - m.y * 0.5f};
-    DrawTextEx(font, text, pos, size, spacing, tint);
+    // Terminal: AI win / Player win
+    if (s.aiIdx >= 40)
+        return 10000;
+    if (s.playerIdx >= 40)
+        return -10000;
+
+    int aiDist = 40 - s.aiIdx;
+    int plDist = 40 - s.playerIdx;
+
+    // Positive score if AI is closer than the player
+    int score = (plDist - aiDist);
+
+    // Bonus for having bumped the player back to 0 (and AI not at 0).
+    if (s.playerIdx == 0 && s.aiIdx != 0)
+        score += 500;
+
+    return score;
 }
 
-enum class AnchorSide
+// Apply a move for either AI (aiMoving = true) or player (false).
+// Includes collision logic (landing on the opponent sends them to 0).
+GameState ApplyMove(const GameState &s, int moveVal, bool aiMoving)
 {
-    Left,
-    Center,
-    Right
-};
+    GameState ns = s;
 
-static void DrawTokenAnchored(Texture2D tex,
-                              Rectangle tile,
-                              float maxFracW, float maxFracH,
-                              float pad,
-                              AnchorSide side,
-                              Color tint)
-{
-    float availW = tile.width - 2.0f * pad;
-    float availH = tile.height - 2.0f * pad;
-    float wantedW = availW * maxFracW;
-    float wantedH = availH * maxFracH;
-    float scale = 1.0f;
-
-    if (tex.id != 0)
+    if (aiMoving)
     {
-        float sx = wantedW / (float)tex.width;
-        float sy = wantedH / (float)tex.height;
-        scale = (sx < sy) ? sx : sy;
+        ns.aiIdx += moveVal;
+        if (ns.aiIdx >= 40)
+            ns.aiIdx = 40;
+
+        // AI lands on player -> player back to start
+        if (ns.aiIdx == ns.playerIdx)
+            ns.playerIdx = 0;
+    }
+    else
+    {
+        ns.playerIdx += moveVal;
+        if (ns.playerIdx >= 40)
+            ns.playerIdx = 40;
+
+        // Player lands on AI -> AI back to start
+        if (ns.playerIdx == ns.aiIdx)
+            ns.aiIdx = 0;
     }
 
-    if (tex.id == 0)
-    {
-        float radius = (wantedH < wantedW ? wantedH : wantedW) * 0.4f;
-        float cx = tile.x + tile.width * 0.5f;
-        if (side == AnchorSide::Left)
-            cx = tile.x + tile.width * 0.3f;
-        else if (side == AnchorSide::Right)
-            cx = tile.x + tile.width * 0.7f;
-        float cy = tile.y + tile.height * 0.5f;
-        DrawCircleV(Vector2{cx, cy}, radius, tint);
-        return;
-    }
-
-    float w = tex.width * scale;
-    float h = tex.height * scale;
-    float cx = tile.x + tile.width * 0.5f;
-    if (side == AnchorSide::Left)
-        cx = tile.x + tile.width * 0.3f;
-    else if (side == AnchorSide::Right)
-        cx = tile.x + tile.width * 0.7f;
-    float cy = tile.y + tile.height * 0.5f;
-
-    Rectangle src = {0, 0, (float)tex.width, (float)tex.height};
-    Rectangle dst = {cx - w * 0.5f, cy - h * 0.5f, w, h};
-    Vector2 origin = {0, 0};
-    DrawTexturePro(tex, src, dst, origin, 0.0f, tint);
+    return ns;
 }
 
-static void BuildGrid(int d0, int d1, int d2, int grid[3][3])
+// -----------------------------------------------------------------------------
+// Bitwise grid helper (uses ∧ ∨ ⊕ conceptually, but ops are &, |, ^)
+// -----------------------------------------------------------------------------
+void BuildGrid(int d0, int d1, int d2, int grid[3][3])
 {
-    int A0 = d0, A1 = d0, A2 = d1;
-    int B0 = d1, B1 = d2, B2 = d2;
+    // Row 0: d0, d1
+    grid[0][0] = d0 & d1; // ∧
+    grid[0][1] = d0 | d1; // ∨
+    grid[0][2] = d0 ^ d1; // ⊕
 
-    grid[0][0] = A0 & B0; // AND
-    grid[1][0] = A1 & B1;
-    grid[2][0] = A2 & B2;
+    // Row 1: d0, d2
+    grid[1][0] = d0 & d2; // ∧
+    grid[1][1] = d0 | d2; // ∨
+    grid[1][2] = d0 ^ d2; // ⊕
 
-    grid[0][1] = A0 | B0; // OR
-    grid[1][1] = A1 | B1;
-    grid[2][1] = A2 | B2; // OR
-    grid[0][2] = A0 ^ B0; // XOR
-    grid[1][2] = A1 ^ B1;
-    grid[2][2] = A2 ^ B2; // XOR
+    // Row 2: d1, d2
+    grid[2][0] = d1 & d2; // ∧
+    grid[2][1] = d1 | d2; // ∨
+    grid[2][2] = d1 ^ d2; // ⊕
 }
 
-static bool ChoiceToRowCol(int choice, int &row, int &col)
+// Map choice 1-9 to (row, col) in row-major order:
+//  1 2 3
+//  4 5 6
+//  7 8 9
+bool ChoiceToRowCol(int choice, int &row, int &col)
 {
     if (choice < 1 || choice > 9)
         return false;
-    row = (choice - 1) % 3;
-    col = (choice - 1) / 3;
+    int idx = choice - 1;
+    row = idx / 3; // 0..2
+    col = idx % 3; // 0..2
     return true;
 }
 
-static int GetDigitPressedStrong()
+// -----------------------------------------------------------------------------
+// MINIMAX (deterministic, no dice randomness)
+// -----------------------------------------------------------------------------
+int MinimaxRecursive(const GameState &state, int depth, bool maximizing,
+                     const int grid[3][3], long long &nodeCount)
 {
-    if (IsKeyPressed(KEY_ONE))
-        return 1;
-    if (IsKeyPressed(KEY_TWO))
-        return 2;
-    if (IsKeyPressed(KEY_THREE))
-        return 3;
-    if (IsKeyPressed(KEY_FOUR))
-        return 4;
-    if (IsKeyPressed(KEY_FIVE))
-        return 5;
-    if (IsKeyPressed(KEY_SIX))
-        return 6;
-    if (IsKeyPressed(KEY_SEVEN))
-        return 7;
-    if (IsKeyPressed(KEY_EIGHT))
-        return 8;
-    if (IsKeyPressed(KEY_NINE))
-        return 9;
-    return 0;
+    nodeCount++;
+
+    bool terminal = (state.aiIdx >= 40 || state.playerIdx >= 40);
+    if (depth == 0 || terminal)
+        return EvaluateState(state);
+
+    if (maximizing)
+    {
+        int best = -1000000000;
+        for (int r = 0; r < 3; r++)
+        {
+            for (int c = 0; c < 3; c++)
+            {
+                int moveVal = grid[r][c];
+                if (moveVal <= 0)
+                    continue;
+
+                GameState child = ApplyMove(state, moveVal, true);
+                int v = MinimaxRecursive(child, depth - 1, false, grid, nodeCount);
+                if (v > best)
+                    best = v;
+            }
+        }
+        if (best == -1000000000)
+            best = EvaluateState(state);
+        return best;
+    }
+    else
+    {
+        int best = 1000000000;
+        for (int r = 0; r < 3; r++)
+        {
+            for (int c = 0; c < 3; c++)
+            {
+                int moveVal = grid[r][c];
+                if (moveVal <= 0)
+                    continue;
+
+                GameState child = ApplyMove(state, moveVal, false);
+                int v = MinimaxRecursive(child, depth - 1, true, grid, nodeCount);
+                if (v < best)
+                    best = v;
+            }
+        }
+        if (best == 1000000000)
+            best = EvaluateState(state);
+        return best;
+    }
+}
+
+// Choose best A.I. move using Minimax at several depths.
+// Also prints node counts for each depth for rubric instrumentation.
+int ChooseBestAIMove_Minimax(int currentPlayerIdx, int currentAIIdx, const int grid[3][3])
+{
+    GameState root{currentPlayerIdx, currentAIIdx};
+
+    const int maxDepth = 3; // small but >1 to show growth
+    int finalBestMove = 0;
+
+    for (int depth = 1; depth <= maxDepth; depth++)
+    {
+        long long nodeCount = 0;
+        int bestScore = -1000000000;
+        int bestMoveVal = 0;
+
+        for (int r = 0; r < 3; r++)
+        {
+            for (int c = 0; c < 3; c++)
+            {
+                int moveVal = grid[r][c];
+                if (moveVal <= 0)
+                    continue;
+
+                GameState child = ApplyMove(root, moveVal, true);
+                int v = MinimaxRecursive(child, depth - 1, false, grid, nodeCount);
+                if (v > bestScore)
+                {
+                    bestScore = v;
+                    bestMoveVal = moveVal;
+                }
+            }
+        }
+
+        printf("Minimax depth %d: %lld nodes\n", depth, nodeCount);
+
+        if (depth == maxDepth)
+            finalBestMove = bestMoveVal;
+    }
+
+    if (finalBestMove <= 0)
+        finalBestMove = 1; // fallback
+
+    return finalBestMove;
+}
+
+// -----------------------------------------------------------------------------
+// EXPECTIMINIMAX (one-step: AI move -> chance over player dice + minimizing move)
+// -----------------------------------------------------------------------------
+double ExpectedValueForPlayerTurn(const GameState &state, long long &nodeCount);
+
+double EvaluateAIMove_Expecti(const GameState &root, int moveVal, long long &nodeCount)
+{
+    GameState afterAI = ApplyMove(root, moveVal, true);
+    nodeCount++;
+
+    if (afterAI.aiIdx >= 40 || afterAI.playerIdx >= 40)
+        return (double)EvaluateState(afterAI);
+
+    return ExpectedValueForPlayerTurn(afterAI, nodeCount);
+}
+
+// Chance + minimizing player: enumerate all player dice triples, let the player pick the move that minimizes the evaluation, and average.
+double ExpectedValueForPlayerTurn(const GameState &state, long long &nodeCount)
+{
+    if (state.aiIdx >= 40 || state.playerIdx >= 40)
+    {
+        nodeCount++;
+        return (double)EvaluateState(state);
+    }
+
+    long long totalOutcomes = 0;
+    double sumValues = 0.0;
+
+    for (int pd0 = 1; pd0 <= 8; pd0++)
+    {
+        for (int pd1 = 1; pd1 <= 8; pd1++)
+        {
+            for (int pd2 = 1; pd2 <= 8; pd2++)
+            {
+                int pGrid[3][3];
+                BuildGrid(pd0, pd1, pd2, pGrid);
+
+                bool any = false;
+                double bestForPlayer = 1e9;
+
+                for (int r = 0; r < 3; r++)
+                {
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int moveVal = pGrid[r][c];
+                        if (moveVal <= 0)
+                            continue;
+
+                        GameState child = ApplyMove(state, moveVal, false);
+                        nodeCount++;
+                        double v = (double)EvaluateState(child);
+                        if (v < bestForPlayer)
+                        {
+                            bestForPlayer = v;
+                            any = true;
+                        }
+                    }
+                }
+
+                if (!any)
+                {
+                    nodeCount++;
+                    bestForPlayer = (double)EvaluateState(state);
+                }
+
+                sumValues += bestForPlayer;
+                totalOutcomes++;
+            }
+        }
+    }
+
+    if (totalOutcomes == 0)
+    {
+        nodeCount++;
+        return (double)EvaluateState(state);
+    }
+
+    return sumValues / (double)totalOutcomes;
+}
+
+// Root: choose A.I. move using one-step Expectiminimax.
+// Also prints a node count log for the rubric.
+int ChooseBestAIMove_Expectiminimax(int currentPlayerIdx, int currentAIIdx,
+                                    const int grid[3][3])
+{
+    GameState root{currentPlayerIdx, currentAIIdx};
+    long long nodeCount = 0;
+
+    double bestEV = -1e18;
+    int bestMoveVal = 0;
+
+    for (int r = 0; r < 3; r++)
+    {
+        for (int c = 0; c < 3; c++)
+        {
+            int moveVal = grid[r][c];
+            if (moveVal <= 0)
+                continue;
+
+            double ev = EvaluateAIMove_Expecti(root, moveVal, nodeCount);
+            if (ev > bestEV)
+            {
+                bestEV = ev;
+                bestMoveVal = moveVal;
+            }
+        }
+    }
+
+    printf("Expectiminimax: %lld nodes evaluated\n", nodeCount);
+
+    if (bestMoveVal <= 0)
+        bestMoveVal = 1;
+
+    return bestMoveVal;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: roll 3 dice (1..8)
+// -----------------------------------------------------------------------------
+void Roll3(int &d0, int &d1, int &d2)
+{
+    d0 = 1 + rand() % 8;
+    d1 = 1 + rand() % 8;
+    d2 = 1 + rand() % 8;
+}
+
+// -----------------------------------------------------------------------------
+// Text-based board visualization (snaking 1–40 as 2x20, Start = 0 below)
+// -----------------------------------------------------------------------------
+void InitSnakeBoard(int board[2][20])
+{
+    int idx = 1;
+    for (int r = 0; r < 2; r++)
+    {
+        bool leftToRight = (r % 2 == 0);
+        if (leftToRight)
+        {
+            for (int c = 0; c < 20; c++)
+                board[r][c] = idx++;
+        }
+        else
+        {
+            for (int c = 19; c >= 0; --c)
+                board[r][c] = idx++;
+        }
+    }
+}
+
+// Format a single cell like [05P ], [23 A], [12PA], or [07  ]
+string FormatCell(int index, int playerIdx, int aiIdx)
+{
+    char buf[6];
+    bool hasP = (playerIdx == index);
+    bool hasA = (aiIdx == index);
+
+    if (hasP && hasA)
+        snprintf(buf, sizeof(buf), "%02dPA", index);
+    else if (hasP)
+        snprintf(buf, sizeof(buf), "%02dP ", index);
+    else if (hasA)
+        snprintf(buf, sizeof(buf), "%02d A", index);
+    else
+        snprintf(buf, sizeof(buf), "%02d  ", index);
+
+    string s = "[";
+    s += buf;
+    s += "]";
+    return s;
+}
+
+void PrintBoard(int playerIdx, int aiIdx)
+{
+    int board[2][20];
+    InitSnakeBoard(board);
+
+    // print from top row (1) down to row 0
+    for (int r = 1; r >= 0; --r)
+    {
+        for (int c = 0; c < 20; c++)
+        {
+            int idx = board[r][c];
+            cout << FormatCell(idx, playerIdx, aiIdx) << " ";
+        }
+        cout << "\n";
+    }
+    cout << "\nStart tile:\n";
+    cout << FormatCell(0, playerIdx, aiIdx) << "\n\n";
+}
+
+// UI
+void PrintPositions(int playerIdx, int aiIdx)
+{
+    cout << "Player (P) at: " << playerIdx << "    "
+         << "AI (A) at: " << aiIdx << "\n";
+}
+
+void PrintDiceAndGrid(int d0, int d1, int d2, int grid[3][3])
+{
+    cout << "Dice: " << d0 << ", " << d1 << ", " << d2 << "\n\n";
+
+    cout << "Bitwise Options:\n";
+    cout << "∧ (AND)       ∨ (OR)      ⊕ (XOR)\n";
+
+    int choiceID = 1;
+    for (int r = 0; r < 3; r++)
+    {
+        // Row: print all three columns on the same line
+        cout << "[" << choiceID << "] ∧: " << grid[r][0]
+             << "     [" << choiceID + 1 << "] ∨: " << grid[r][1]
+             << "     [" << choiceID + 2 << "] ⊕: " << grid[r][2] << "\n";
+
+        choiceID += 3;
+    }
+
+    cout << "\n(Choices 1–3 = row 1, 4–6 = row 2, 7–9 = row 3)\n\n";
 }
 
 int main()
 {
-    // Fixed-size window: no dynamic scaling or camera. Designed for 1440x900.
-    InitWindow(DESIGN_W, DESIGN_H, "Bitwise Dice Duel - project.cpp");
-    SetTargetFPS(60);
+    srand((unsigned int)time(nullptr));
 
-    Font ui = GetFontDefault();
-    Texture2D texPlayer = LoadTexture("player.png");
-    Texture2D texAI = LoadTexture("ai.png");
-    Texture2D texPlayerSad = LoadTexture("player_sad.png");
-    Texture2D texAISad = LoadTexture("ai_sad.png");
+    int playerIdx = 0, aiIdx = 0;
+    bool playerWon = false, aiWon = false;
 
-    Color PLAYER_COLOR = {250, 45, 102, 255};
-    Color AI_COLOR = {0, 243, 125, 255};
+    bool useMinimax = false; // false = Expectiminimax, true = Minimax
 
-    // ----- Title & names -----
-    const float centerX = DESIGN_W * 0.5f;
-
-    // Shared baseline under title+names
-    float baseY = 85.0f;
-
-    // Shift the centered block (instructions + dice) left by an offset
-    const float blockOffsetX = -180.0f; // negative = left shift
-    const char *instructions = "Press 1-9 to choose a cell.";
-    float instrSize = 20.0f;
-    Vector2 instrM = MeasureTextEx(ui, instructions, instrSize, 1);
-    float instructionX = (centerX + blockOffsetX) - instrM.x * 0.5f;
-    float instructionY = baseY;
-
-    const float dieW = 48.0f, dieH = 48.0f, dieGap = 16.0f;
-    const float diceGroupW = 3 * dieW + 2 * dieGap;
-    float diceBaseY = instructionY + instrM.y + 4.0f;
-    float diceInnerX = (centerX + blockOffsetX) - diceGroupW * 0.5f;
-
-    auto drawDie = [&](Font f, int value, float x, float y)
+    while (true)
     {
-        Rectangle r = {x, y, dieW, dieH};
-        DrawRectangleRec(r, Color{45, 45, 52, 255});
-        DrawRectangleLines((int)r.x, (int)r.y, (int)r.width, (int)r.height, Color{90, 90, 100, 255});
-        if (value > 0)
+        cout << "Choose AI search method:\n";
+        cout << "  1 = Minimax\n";
+        cout << "  2 = Expectiminimax\n";
+        cout << "Selection: ";
+        string line;
+        if (!getline(cin, line))
+            return 0;
+        if (line.empty())
+            continue;
+        char ch = line[0];
+        if (ch == '1')
         {
-            char t[8];
-            std::snprintf(t, sizeof(t), "%d", value);
-            DrawTextCentered(f, t, {x + dieW / 2, y + dieH / 2}, 24, 1, RAYWHITE);
+            useMinimax = true;
+            cout << "Minimax selected.\n\n";
+            break;
         }
-    };
-
-    // Die combinations layout
-    const char *colHdr[3] = {"AND", "OR", "XOR"};
-    float optionsOuterW = 560.0f; // layout width
-    float optionsOuterX = DESIGN_W - 160.0f - optionsOuterW;
-    float optionsOuterY = baseY;
-    // Taller spacing + skew up a bit
-    const float contentShiftUp = -6.0f;
-    const float optionsTopY = optionsOuterY + 14.0f + contentShiftUp;
-    const int gridCols = 3, gridRows = 3;
-    const float colGap = 16.0f, rowGap = 12.0f;
-    const float colW = (optionsOuterW - colGap * (gridCols - 1)) / gridCols;
-    const float hdrSize = 22.0f, cellHtxt = 22.0f;
-
-    // Board layout (bottom 1440x700 area)
-    const int cols = 8;
-    const int rows = 5;        // 5 rows of 8
-    const int totalCells = 41; // 0..40
-    const int LAST_INDEX = 40;
-
-    const float boardW = 1440.0f;
-    const float boardH = 700.0f;
-    const float bottomMargin = 24.0f;
-    const float innerTop = DESIGN_H - boardH;
-    const float innerBottom = DESIGN_H - bottomMargin;
-    const float innerH = innerBottom - innerTop;
-    const float centerYBoard = innerTop + innerH * 0.5f;
-
-    float rowStep = (innerH - 80.0f) / (rows + 1);
-    float colStep = (boardW - 280.0f) / (cols - 1);
-
-    float leftCenterX = 140.0f;
-    float bottomCenterY = innerBottom - 30.0f;
-
-    std::vector<Cell> cells(totalCells);
-    cells[0].cx = leftCenterX;
-    cells[0].cy = bottomCenterY;
-
-    {
-        int idx = 1;
-        for (int r = 0; r < rows; ++r)
+        else if (ch == '2')
         {
-            float cy = bottomCenterY - (r + 1) * rowStep;
-            bool leftToRight = (r % 2 == 0);
-            if (leftToRight)
-            {
-                for (int c = 0; c < cols && idx < totalCells; ++c)
-                {
-                    cells[idx].cx = leftCenterX + c * colStep;
-                    cells[idx].cy = cy;
-                    ++idx;
-                }
-            }
-            else
-            {
-                for (int c = cols - 1; c >= 0 && idx < totalCells; --c)
-                {
-                    cells[idx].cx = leftCenterX + c * colStep;
-                    cells[idx].cy = cy;
-                    ++idx;
-                }
-            }
+            useMinimax = false;
+            cout << "Expectiminimax selected.\n\n";
+            break;
         }
+        cout << "Invalid selection. Please enter 1 or 2.\n";
     }
 
-    // Lambda instead of nested function
-    auto GetTileRect = [&](int index) -> Rectangle
-    {
-        const float tileH = 64.0f;
-        const float tileW = 85.0f;
-        const float startW = 120.0f;
-
-        if (index == 0)
-        {
-            float x = cells[0].cx - startW * 0.5f;
-            float y = cells[0].cy - tileH * 0.5f;
-            return Rectangle{x, y, startW, tileH};
-        }
-        else
-        {
-            Cell c = cells[index];
-            float x = c.cx - tileW * 0.5f;
-            float y = c.cy - tileH * 0.5f;
-            return Rectangle{x, y, tileW, tileH};
-        }
-    };
-
-    int playerIdx = 0;
-    int aiIdx = 0;
-    bool playerWon = false;
-    bool aiWon = false;
-
     int d0 = 0, d1 = 0, d2 = 0;
-    auto roll3 = [&]()
-    {
-        d0 = GetRandomValue(1, 8);
-        d1 = GetRandomValue(1, 8);
-        d2 = GetRandomValue(1, 8);
-    };
-    roll3();
+    Roll3(d0, d1, d2);
 
-    int gridVals[3][3];
-    Rectangle optCell[3][3];
+    cout << "Bitwise Dice Duel!\n";
+    cout << "--------------------------------------\n";
+    cout << "Goal: Reach tile 40 first.\n";
+    cout << "Landing on your opponent sends them back to 0.\n";
+    cout << "Controls:\n";
+    cout << "  - Enter 1–9 to choose a grid cell\n";
+    cout << "  - 'q' to quit\n\n";
 
-    while (!WindowShouldClose())
+    while (!playerWon && !aiWon)
     {
-        if (playerWon || aiWon)
+        PrintBoard(playerIdx, aiIdx);
+        PrintPositions(playerIdx, aiIdx);
+
+        cout << "AI mode: " << (useMinimax ? "Minimax" : "Expectiminimax") << "\n\n";
+
+        int gridVals[3][3];
+        BuildGrid(d0, d1, d2, gridVals);
+        PrintDiceAndGrid(d0, d1, d2, gridVals);
+
+        // ---- Player input loop ----
+        int choice = 0;
+        while (true)
         {
-            BeginDrawing();
-            ClearBackground(Color{20, 20, 24, 255});
+            cout << "Your move (1–9 or q): ";
+            string input;
+            if (!getline(cin, input))
+                return 0; // EOF or error
 
-            bool pWon = playerWon;
-            Texture2D leftTex = pWon ? texPlayer : texPlayerSad;
-            Texture2D rightTex = pWon ? texAISad : texAI;
+            if (input.empty())
+                continue;
 
-            int sw = DESIGN_W, sh = DESIGN_H;
-            float gap = 40.0f;
-            float totalW = leftTex.width + gap + rightTex.width;
-            float x0 = sw * 0.5f - totalW * 0.5f;
-            float yMid = sh * 0.5f;
-            float leftX = x0;
-            float rightX = x0 + leftTex.width + gap;
-            float leftY = yMid - leftTex.height * 0.5f;
-            float rightY = yMid - rightTex.height * 0.5f;
-            DrawTexture(leftTex, (int)leftX, (int)leftY, WHITE);
-            DrawTexture(rightTex, (int)rightX, (int)rightY, WHITE);
+            char ch = input[0];
 
-            const char *msg = pWon ? "PLAYER WINS!" : "A.I. WINS!";
-            int fontSize = 48;
-            Vector2 size = MeasureTextEx(ui, msg, fontSize, 2);
-            Color msgCol = pWon ? (Color){250, 45, 102, 255} : (Color){0, 243, 125, 255};
-            DrawTextEx(ui, msg, {(float)sw * 0.5f - size.x * 0.5f, leftY - size.y - 24.0f}, fontSize, 2, msgCol);
+            if (ch == 'q' || ch == 'Q')
+            {
+                cout << "Quitting game.\n";
+                return 0;
+            }
 
-            EndDrawing();
+            if (ch >= '1' && ch <= '9')
+            {
+                choice = ch - '0';
+                break;
+            }
+
+            cout << "Invalid input. Try again.\n";
+        }
+
+        // ---- Apply player move ----
+        int row, col;
+        if (!ChoiceToRowCol(choice, row, col))
+        {
+            cout << "Bad mapping (this should not happen).\n";
             continue;
         }
 
+        int move = gridVals[row][col];
+        cout << "You chose cell " << choice << " with move value " << move << ".\n";
+
+        GameState state{playerIdx, aiIdx};
+        int oldAI = state.aiIdx;
+
+        state = ApplyMove(state, move, false); // player move
+        playerIdx = state.playerIdx;
+        aiIdx = state.aiIdx;
+
+        if (playerIdx >= 40)
+        {
+            PrintBoard(playerIdx, aiIdx);
+            cout << "\nYou reached 40! You win!\n";
+            playerWon = true;
+            break;
+        }
+
+        bool playerCapturedAI = (oldAI != 0 && aiIdx == 0 && move > 0);
+        if (playerCapturedAI)
+        {
+            cout << "You landed on the AI. AI is sent back to 0.\n";
+        }
+
+        // ---- AI turn (always happens unless game is over) ----
+        cout << "\n--- AI TURN ---\n";
+        Roll3(d0, d1, d2);
         BuildGrid(d0, d1, d2, gridVals);
+        cout << "AI dice: " << d0 << ", " << d1 << ", " << d2 << "\n";
 
-        for (int c = 0; c < gridCols; ++c)
+        int aiMoveVal = 0;
+        if (useMinimax)
         {
-            float colX = optionsOuterX + c * (colW + colGap);
-            for (int r = 0; r < gridRows; ++r)
-            {
-                float rowY = optionsTopY + 22.0f + r * (34.0f + rowGap);
-                float cellH = 34.0f;
-                Rectangle rc = {colX, rowY, colW, cellH};
-                optCell[r][c] = rc;
-            }
+            aiMoveVal = ChooseBestAIMove_Minimax(playerIdx, aiIdx, gridVals);
+            cout << "AI (Minimax) chooses move value: " << aiMoveVal << "\n";
+        }
+        else
+        {
+            aiMoveVal = ChooseBestAIMove_Expectiminimax(playerIdx, aiIdx, gridVals);
+            cout << "AI (Expectiminimax) chooses move value: " << aiMoveVal << "\n";
         }
 
-        int chosen = 0;
-        int digit = GetDigitPressedStrong();
-        if (digit >= 1 && digit <= 9)
-            chosen = digit;
+        GameState afterAI{playerIdx, aiIdx};
+        int oldPlayer = afterAI.playerIdx;
+        afterAI = ApplyMove(afterAI, aiMoveVal, true);
+        playerIdx = afterAI.playerIdx;
+        aiIdx = afterAI.aiIdx;
 
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        if (aiIdx >= 40)
         {
-            Vector2 m = GetMousePosition();
-            for (int c = 0; c < gridCols && chosen == 0; ++c)
-            {
-                for (int r = 0; r < gridRows; ++r)
-                {
-                    if (CheckCollisionPointRec(m, optCell[r][c]))
-                    {
-                        chosen = c * 3 + r + 1;
-                        break;
-                    }
-                }
-            }
+            PrintBoard(playerIdx, aiIdx);
+            cout << "\nAI reached 40! AI wins!\n";
+            aiWon = true;
+            break;
         }
 
-        if (chosen >= 1 && chosen <= 9)
+        bool aiCapturedPlayer = (oldPlayer != 0 && playerIdx == 0 && aiMoveVal > 0);
+        if (aiCapturedPlayer)
         {
-            int row, col;
-            if (ChoiceToRowCol(chosen, row, col))
-            {
-                int move = gridVals[row][col];
-                playerIdx += move;
-                if (playerIdx >= LAST_INDEX)
-                {
-                    playerIdx = LAST_INDEX;
-                    playerWon = true;
-                }
-                else
-                {
-                    roll3();
-                    int aiGrid[3][3];
-                    BuildGrid(d0, d1, d2, aiGrid);
-                    int bestAI = 0;
-                    for (int rr = 0; rr < 3; ++rr)
-                    {
-                        for (int cc = 0; cc < 3; ++cc)
-                        {
-                            bestAI = std::max(bestAI, aiGrid[rr][cc]);
-                        }
-                    }
-                    aiIdx += bestAI;
-                    if (aiIdx >= LAST_INDEX)
-                    {
-                        aiIdx = LAST_INDEX;
-                        aiWon = true;
-                    }
-                    else
-                    {
-                        roll3();
-                    }
-                }
-            }
+            cout << "AI landed on you, sending you back to 0.\n";
         }
 
-        // DRAW (normal frame)
-        BeginDrawing();
-        ClearBackground(Color{20, 20, 24, 255});
-
-        // Title & names
-        DrawTextEx(ui, "Bitwise Dice Duel", {24, 16}, 32, 2, RAYWHITE);
-        DrawTextEx(ui, "Player", {24, 56}, 22, 1, PLAYER_COLOR);
-        float playerW = MeasureTextEx(ui, "Player", 22, 1).x;
-        DrawTextEx(ui, "A.I.", {24 + 20 + playerW, 56}, 22, 1, AI_COLOR);
-
-        // Instructions + dice beneath
-        DrawTextEx(ui, instructions, {instructionX, instructionY}, instrSize, 1, RAYWHITE);
-        drawDie(ui, d0, diceInnerX + 0 * (dieW + dieGap), diceBaseY);
-        drawDie(ui, d1, diceInnerX + 1 * (dieW + dieGap), diceBaseY);
-        drawDie(ui, d2, diceInnerX + 2 * (dieW + dieGap), diceBaseY);
-
-        // Combinations headers + options
-        for (int c = 0; c < 3; ++c)
-        {
-            float cxh = optionsOuterX + c * (colW + colGap) + colW * 0.5f;
-            DrawTextCentered(ui, colHdr[c], {cxh, optionsTopY - 8.0f}, hdrSize, 1, RAYWHITE);
-        }
-
-        for (int c = 0; c < gridCols; ++c)
-        {
-            for (int r = 0; r < gridRows; ++r)
-            {
-                Rectangle cellRect = optCell[r][c];
-                DrawRectangleRec(cellRect, Color{40, 42, 50, 255});
-                DrawRectangleLines((int)cellRect.x, (int)cellRect.y, (int)cellRect.width, (int)cellRect.height, Color{90, 90, 100, 255});
-
-                int val = gridVals[r][c];
-                int choiceID = c * 3 + r + 1;
-                char buf[32];
-                std::snprintf(buf, sizeof(buf), "[%d] %d", choiceID, val);
-
-                float textX = cellRect.x + 10.0f;
-                float textY = cellRect.y + (cellRect.height - cellHtxt) * 0.5f;
-                DrawTextEx(ui, buf, {textX, textY}, cellHtxt, 1, RAYWHITE);
-            }
-        }
-
-        float boardAreaTop = innerTop;
-        float boardAreaBottom = innerBottom;
-        float centerLineY = boardAreaTop + (boardAreaBottom - boardAreaTop) * 0.55f;
-        DrawLine(0, (int)centerLineY, DESIGN_W, (int)centerLineY, Color{30, 30, 36, 255});
-
-        for (int i = 0; i < totalCells; ++i)
-        {
-            Rectangle tr = GetTileRect(i);
-            Color fill = Color{35, 35, 42, 255};
-            if (i == 0)
-            {
-                fill = Color{45, 45, 58, 255};
-            }
-            DrawRectangleRec(tr, fill);
-            DrawRectangleLines((int)tr.x, (int)tr.y, (int)tr.width, (int)tr.height, Color{90, 90, 100, 255});
-
-            if (i == 0)
-            {
-                const char *label = "Start";
-                Vector2 tm = MeasureTextEx(ui, label, 22, 1);
-                float tx = tr.x + tr.width * 0.5f - tm.x * 0.5f;
-                float ty = tr.y + tr.height * 0.5f - tm.y * 0.5f;
-                DrawTextEx(ui, label, {tx, ty}, 22, 1, RAYWHITE);
-            }
-            else
-            {
-                char lbl[8];
-                std::snprintf(lbl, sizeof(lbl), "%02d", i);
-                DrawTextCentered(ui, lbl, {tr.x + tr.width * 0.5f, tr.y + tr.height * 0.5f}, 20, 1, Color{220, 220, 230, 255});
-            }
-        }
-
-        Rectangle tileP = GetTileRect(playerIdx);
-        Rectangle tileA = GetTileRect(aiIdx);
-        DrawTokenAnchored(texPlayer, tileP, 0.88f, 0.88f, 4.0f, AnchorSide::Left, WHITE);
-        DrawTokenAnchored(texAI, tileA, 0.88f, 0.88f, 4.0f, AnchorSide::Right, WHITE);
-
-        EndDrawing();
+        // Roll dice for next player turn
+        Roll3(d0, d1, d2);
     }
 
-    if (texPlayer.id != 0)
-        UnloadTexture(texPlayer);
-    if (texAI.id != 0)
-        UnloadTexture(texAI);
-    if (texPlayerSad.id != 0)
-        UnloadTexture(texPlayerSad);
-    if (texAISad.id != 0)
-        UnloadTexture(texAISad);
-    CloseWindow();
+    cout << "\nGame over.\n";
     return 0;
 }
