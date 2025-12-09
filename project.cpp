@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <string>
+#include <chrono>
+#include <thread>
 
 using namespace std;
 // -----------------------------------------------------------------------------
@@ -68,7 +70,7 @@ GameState ApplyMove(const GameState &s, int moveVal, bool aiMoving)
 // -----------------------------------------------------------------------------
 // Bitwise grid helper (uses ∧ ∨ ⊕ conceptually, but ops are &, |, ^)
 // -----------------------------------------------------------------------------
-void BuildGrid(int d0, int d1, int d2, int grid[3][3])
+void BuildDieGrid(int d0, int d1, int d2, int grid[3][3])
 {
     // Row 0: d0, d1
     grid[0][0] = d0 & d1; // ∧
@@ -236,7 +238,7 @@ double ExpectedValueForPlayerTurn(const GameState &state, long long &nodeCount)
             for (int pd2 = 1; pd2 <= 8; pd2++)
             {
                 int pGrid[3][3];
-                BuildGrid(pd0, pd1, pd2, pGrid);
+                BuildDieGrid(pd0, pd1, pd2, pGrid);
 
                 bool any = false;
                 double bestForPlayer = 1e9;
@@ -468,7 +470,7 @@ int main()
         cout << "AI mode: " << (useMinimax ? "Minimax" : "Expectiminimax") << "\n\n";
 
         int gridVals[3][3];
-        BuildGrid(d0, d1, d2, gridVals);
+        BuildDieGrid(d0, d1, d2, gridVals);
         PrintDiceAndGrid(d0, d1, d2, gridVals);
 
         // ---- Player input loop ----
@@ -535,8 +537,10 @@ int main()
         // ---- AI turn (always happens unless game is over) ----
         cout << "\n--- AI TURN ---\n";
         Roll3(d0, d1, d2);
-        BuildGrid(d0, d1, d2, gridVals);
+        BuildDieGrid(d0, d1, d2, gridVals);
         cout << "AI dice: " << d0 << ", " << d1 << ", " << d2 << "\n";
+        PrintBoard(playerIndex, aiIndex);
+        this_thread::sleep_for(chrono::seconds(5));
 
         int aiMoveVal = 0;
         if (useMinimax)
