@@ -15,19 +15,19 @@ struct GameState
 };
 
 // Evaluation function: positive is good for the AI, negative for the player
-int EvaluateState(const GameState &s)
+int EvaluateState(const GameState &state)
 {
     // Terminal: AI win / Player win
-    if (s.aiIndex >= 40)
+    if (state.aiIndex >= 40)
         return 10000;
-    if (s.playerIndex >= 40)
+    if (state.playerIndex >= 40)
         return -10000;
 
     // Positive score if AI is ahead of the player
-    int score = s.aiIndex - s.playerIndex;
+    int score = state.aiIndex - state.playerIndex;
 
     // Bonus for having bumped the player back to 0 (and AI not at 0).
-    if (s.playerIndex == 0 && s.aiIndex != 0)
+    if (state.playerIndex == 0 && state.aiIndex != 0)
         score += 500;
 
     return score;
@@ -38,197 +38,101 @@ int EvaluateState(const GameState &s)
  Applies a move for either AI (aiMoving = true) or player (false).
  Includes collision logic: landing on the opponent sends them to 0.
 */
-GameState ApplyMove(const GameState &s, int moveVal, bool aiMoving)
+GameState ApplyMove(const GameState &currentState, int moveValue, bool aiMoving)
 {
-    GameState ns = s;
+    GameState nextState = currentState;
 
     if (aiMoving)
     {
-        ns.aiIndex += moveVal;
-        if (ns.aiIndex >= 40)
-            ns.aiIndex = 40;
+        nextState.aiIndex += moveValue;
+        if (nextState.aiIndex >= 40)
+            nextState.aiIndex = 40;
 
         // AI lands on player -> player back to start
-        if (ns.aiIndex == ns.playerIndex)
-            ns.playerIndex = 0;
+        if (nextState.aiIndex == nextState.playerIndex)
+            nextState.playerIndex = 0;
     }
     else
     {
-        ns.playerIndex += moveVal;
-        if (ns.playerIndex >= 40)
-            ns.playerIndex = 40;
+        nextState.playerIndex += moveValue;
+        if (nextState.playerIndex >= 40)
+            nextState.playerIndex = 40;
 
         // Player lands on AI -> AI back to start
-        if (ns.playerIndex == ns.aiIndex)
-            ns.aiIndex = 0;
+        if (nextState.playerIndex == nextState.aiIndex)
+            nextState.aiIndex = 0;
     }
 
-    return ns;
+    return nextState;
 }
 
-/*
- Bitwise grid helper
- Uses ∧ ∨ ⊕ conceptually, implemented with &, |, ^ in C++
-*/
-void BuildDieGrid(int d0, int d1, int d2, int grid[3][3])
+// Bitwise grid helper - Uses ∧ ∨ ⊕ conceptually, implemented with &, |, ^ in C++
+void BuildDieGrid(int die1, int die2, int die3, int grid[3][3])
 {
-    // Row 0: d0, d1
-    grid[0][0] = d0 & d1; // ∧
-    grid[0][1] = d0 | d1; // ∨
-    grid[0][2] = d0 ^ d1; // ⊕
+    // Row 0: die1, die2
+    grid[0][0] = die1 & die2;
+    grid[0][1] = die1 | die2;
+    grid[0][2] = die1 ^ die2;
 
-    // Row 1: d0, d2
-    grid[1][0] = d0 & d2; // ∧
-    grid[1][1] = d0 | d2; // ∨
-    grid[1][2] = d0 ^ d2; // ⊕
+    // Row 1: die1, die3
+    grid[1][0] = die1 & die3;
+    grid[1][1] = die1 | die3;
+    grid[1][2] = die1 ^ die3;
 
-    // Row 2: d1, d2
-    grid[2][0] = d1 & d2; // ∧
-    grid[2][1] = d1 | d2; // ∨
-    grid[2][2] = d1 ^ d2; // ⊕
-}
-
-/*
- EXPECTIMINIMAX
- One-step search: AI move → chance over player dice → minimizing player move
-*/
-
-/*
- Player turn evaluation under randomness:
- Enumerates all dice outcomes, lets player choose the MIN move,
- then averages outcomes (chance node).
-*/
-double ExpectedValueForPlayerTurn(const GameState &state, long long &nodeCount)
-{
-    if (state.aiIndex >= 40 || state.playerIndex >= 40)
-    {
-        nodeCount++;
-        return (double)EvaluateState(state);
-    }
-
-    long long totalOutcomes = 0;
-    double sumValues = 0.0;
-
-    for (int pd0 = 1; pd0 <= 8; pd0++)
-    {
-        for (int pd1 = 1; pd1 <= 8; pd1++)
-        {
-            for (int pd2 = 1; pd2 <= 8; pd2++)
-            {
-                int pGrid[3][3];
-                BuildDieGrid(pd0, pd1, pd2, pGrid);
-
-                bool any = false;
-                double bestForPlayer = 1e9;
-
-                for (int r = 0; r < 3; r++)
-                {
-                    for (int c = 0; c < 3; c++)
-                    {
-                        int moveVal = pGrid[r][c];
-                        if (moveVal <= 0)
-                            continue;
-
-                        GameState child = ApplyMove(state, moveVal, false);
-                        nodeCount++;
-
-                        double v = (double)EvaluateState(child);
-                        if (v < bestForPlayer)
-                        {
-                            bestForPlayer = v;
-                            any = true;
-                        }
-                    }
-                }
-
-                if (!any)
-                {
-                    nodeCount++;
-                    bestForPlayer = (double)EvaluateState(state);
-                }
-
-                sumValues += bestForPlayer;
-                totalOutcomes++;
-            }
-        }
-    }
-
-    if (totalOutcomes == 0)
-    {
-        nodeCount++;
-        return (double)EvaluateState(state);
-    }
-
-    return sumValues / (double)totalOutcomes;
+    // Row 2: die2, die3
+    grid[2][0] = die2 & die3;
+    grid[2][1] = die2 | die3;
+    grid[2][2] = die2 ^ die3;
 }
 
 // Utility: roll three dice (1–8)
-void Roll3(int &d0, int &d1, int &d2)
+void Roll3(int &die1, int &die2, int &die3)
 {
-    d0 = 1 + rand() % 8;
-    d1 = 1 + rand() % 8;
-    d2 = 1 + rand() % 8;
+    die1 = 1 + rand() % 8;
+    die2 = 1 + rand() % 8;
+    die3 = 1 + rand() % 8;
 }
 
-/*
- PrintBoard
- Renders the linear 0–40 board with PL and AI labels underneath positions.
-*/
+// PrintBoard - Renders the linear 0–40 board with PL and AI labels underneath positions.
 void PrintBoard(int playerIndex, int aiIndex)
 {
-    // First row: 00 01 02 ... 40
-    for (int i = 0; i <= 40; i++)
-        printf("%02d  ", i);
+    for (int position = 0; position <= 40; position++)
+        printf("%02d  ", position);
     cout << "\n";
 
-    // Second row: Player marker
-    for (int i = 0; i <= 40; i++)
-        (i == playerIndex) ? cout << "PL  " : cout << "    ";
+    for (int position = 0; position <= 40; position++)
+        (position == playerIndex) ? cout << "PL  " : cout << "    ";
     cout << "\n";
 
-    // Third row: AI marker
-    for (int i = 0; i <= 40; i++)
-        (i == aiIndex) ? cout << "AI  " : cout << "    ";
+    for (int position = 0; position <= 40; position++)
+        (position == aiIndex) ? cout << "AI  " : cout << "    ";
     cout << "\n";
 }
 
-/*
- main()
- Game loop: player turn → AI turn → repeat until winner.
-*/
+// main() - Game loop: player turn → AI turn → repeat until winner.
 int main()
 {
     srand((unsigned int)time(nullptr));
 
     int playerIndex = 0, aiIndex = 0;
-    bool playerWon = false, aiWon = false;
 
     cout << "Bitwise Dice Duel!\n";
     cout << "--------------------------------------\n";
     cout << "Goal: Reach tile 40 first.\n";
-    cout << "Landing on your opponent sends them to 0.\n";
+    cout << "Landing on your opponent sends them back to 0.\n";
     cout << "Enter 1–9 to choose a grid cell.\n\n";
 
-    int d0 = 0, d1 = 0, d2 = 0;
-    Roll3(d0, d1, d2);
+    int die1 = 0, die2 = 0, die3 = 0;
+    Roll3(die1, die2, die3);
 
-    while (!playerWon && !aiWon)
+    while (true)
     {
         PrintBoard(playerIndex, aiIndex);
 
         int bitwiseGrid[3][3];
-        BuildDieGrid(d0, d1, d2, bitwiseGrid);
+        BuildDieGrid(die1, die2, die3, bitwiseGrid);
 
-        /*
-            Show dice results and the 3×3 bitwise operation grid.
-            Each row corresponds to pairs of dice:
-              Row 1: d0 and d1
-              Row 2: d0 and d2
-              Row 3: d1 and d2
-            Columns correspond to:
-              [1] AND   [2] OR   [3] XOR
-        */
-        cout << "Dice: " << d0 << ", " << d1 << ", " << d2 << "\n\n";
+        cout << "Dice: " << die1 << ", " << die2 << ", " << die3 << "\n\n";
         cout << "∧ (AND)       ∨ (OR)      ⊕ (XOR)\n";
 
         int optionNumber = 1;
@@ -243,7 +147,6 @@ int main()
 
         cout << "\n";
 
-        // Player input: validated 1–9
         int choice = 0;
         while (true)
         {
@@ -260,24 +163,17 @@ int main()
             cout << "Invalid input. Try again.\n";
         }
 
-        /*
-         Convert 1–9 into (row, col) in the 3×3 grid
-         Layout:
-             1 2 3
-             4 5 6
-             7 8 9
-        */
         int index = choice - 1;
-        int row = index / 3; // 0,1,2
-        int col = index % 3; // 0,1,2
+        int row = index / 3;
+        int col = index % 3;
 
-        int move = bitwiseGrid[row][col];
+        int moveValue = bitwiseGrid[row][col];
 
-        GameState state{playerIndex, aiIndex};
+        GameState currentState{playerIndex, aiIndex};
 
-        state = ApplyMove(state, move, false);
-        playerIndex = state.playerIndex;
-        aiIndex = state.aiIndex;
+        currentState = ApplyMove(currentState, moveValue, false);
+        playerIndex = currentState.playerIndex;
+        aiIndex = currentState.aiIndex;
 
         if (playerIndex >= 40)
         {
@@ -286,67 +182,127 @@ int main()
             break;
         }
 
-        if (state.aiIndex != 0 && aiIndex == 0 && move > 0)
+        if (currentState.aiIndex != 0 && aiIndex == 0 && moveValue > 0)
             cout << "You landed on the AI, sending it back to 0.\n";
 
-        // AI TURN
         cout << "\n--- AI TURN ---\n";
-        Roll3(d0, d1, d2);
-        BuildDieGrid(d0, d1, d2, bitwiseGrid);
+        Roll3(die1, die2, die3);
+        BuildDieGrid(die1, die2, die3, bitwiseGrid);
 
-        cout << "AI dice: " << d0 << ", " << d1 << ", " << d2 << "\n";
+        cout << "AI dice: " << die1 << ", " << die2 << ", " << die3 << "\n";
         PrintBoard(playerIndex, aiIndex);
         this_thread::sleep_for(chrono::seconds(5));
 
-        /*
-            Inline Expectiminimax:
-            Determine AI’s best move by evaluating all 9 grid options
-            and selecting the one with the highest expected value.
-        */
         long long nodeCount = 0;
         double bestExpectedValue = -1e18;
         int aiMoveValue = 0;
 
-        // Root state for evaluating AI moves
         GameState rootState{playerIndex, aiIndex};
 
-        // Examine all possible moves in the 3×3 grid
+        // Loop over all 9 possible AI moves in the 3×3 bitwise grid
         for (int aiRow = 0; aiRow < 3; ++aiRow)
         {
             for (int aiCol = 0; aiCol < 3; ++aiCol)
             {
-                int moveValue = bitwiseGrid[aiRow][aiCol];
-                if (moveValue <= 0)
-                    continue;
+                // Candidate move value from the bitwise grid
+                int candidateMove = bitwiseGrid[aiRow][aiCol];
+                if (candidateMove <= 0)
+                    continue; // Skip unusable moves (AND/XOR may produce 0)
 
-                // ---- Inlined EvaluateAIMove_Expecti logic ----
-                GameState afterAI = ApplyMove(rootState, moveValue, true);
-                nodeCount++;
+                // Apply the AI move to produce the next game state
+                GameState afterAI = ApplyMove(rootState, candidateMove, true);
+                nodeCount++; // Count this node in the search
 
-                double expectedValue;
+                double expectedValue; // Expected value of choosing this move
+
+                // If AI wins immediately, no need to compute further chance nodes
                 if (afterAI.aiIndex >= 40 || afterAI.playerIndex >= 40)
                 {
                     expectedValue = (double)EvaluateState(afterAI);
                 }
                 else
                 {
-                    expectedValue = ExpectedValueForPlayerTurn(afterAI, nodeCount);
-                }
-                // ----------------------------------------------
+                    // ----- PLAYER CHANCE NODE (Expectiminimax) -----
+                    // Evaluate the player's turn by averaging over all dice outcomes
 
-                // Keep the move with the highest expected value
+                    long long totalOutcomes = 0; // 8×8×8 = 512 total possibilities
+                    double sumValues = 0.0;      // Sum of best player responses
+
+                    // Enumerate all possible triples of dice the player might roll
+                    for (int playerDie1 = 1; playerDie1 <= 8; playerDie1++)
+                    {
+                        for (int playerDie2 = 1; playerDie2 <= 8; playerDie2++)
+                        {
+                            for (int playerDie3 = 1; playerDie3 <= 8; playerDie3++)
+                            {
+                                // Build the player's bitwise move grid for this dice roll
+                                int playerGrid[3][3];
+                                BuildDieGrid(playerDie1, playerDie2, playerDie3, playerGrid);
+
+                                bool foundMove = false;
+                                double bestForPlayer = 1e9; // Player MINIMIZES evaluation
+
+                                // Player may choose any of the 9 bitwise outcomes
+                                for (int playerRow = 0; playerRow < 3; playerRow++)
+                                {
+                                    for (int playerCol = 0; playerCol < 3; playerCol++)
+                                    {
+                                        int playerMoveValue = playerGrid[playerRow][playerCol];
+                                        if (playerMoveValue <= 0)
+                                            continue; // Can't move zero distance
+
+                                        // Player applies this move
+                                        GameState childState = ApplyMove(afterAI, playerMoveValue, false);
+                                        nodeCount++; // Count search node
+
+                                        double evaluationValue = (double)EvaluateState(childState);
+
+                                        // MIN player chooses the move worst for the AI
+                                        if (evaluationValue < bestForPlayer)
+                                        {
+                                            bestForPlayer = evaluationValue;
+                                            foundMove = true;
+                                        }
+                                    }
+                                }
+
+                                // If player had no valid moves, evaluate staying in same state
+                                if (!foundMove)
+                                {
+                                    nodeCount++;
+                                    bestForPlayer = (double)EvaluateState(afterAI);
+                                }
+
+                                // Add to the expectation sum
+                                sumValues += bestForPlayer;
+                                totalOutcomes++;
+                            }
+                        }
+                    }
+
+                    // Compute expected value: average over all player dice rolls
+                    if (totalOutcomes == 0)
+                    {
+                        nodeCount++;
+                        expectedValue = (double)EvaluateState(afterAI);
+                    }
+                    else
+                    {
+                        expectedValue = sumValues / (double)totalOutcomes;
+                    }
+                }
+
+                // Update best move if this expected value is higher
                 if (expectedValue > bestExpectedValue)
                 {
                     bestExpectedValue = expectedValue;
-                    aiMoveValue = moveValue;
+                    aiMoveValue = candidateMove;
                 }
             }
         }
 
-        // Print how many nodes were evaluated for grading/rubric
-        printf("Expectiminimax: %lld nodes evaluated\n", nodeCount);
+        cout << "Expectiminimax: " << nodeCount << " nodes evaluated\n";
 
-        // AI must move at least 1
         if (aiMoveValue <= 0)
             aiMoveValue = 1;
 
@@ -368,7 +324,7 @@ int main()
         if (afterAI.playerIndex != 0 && playerIndex == 0 && aiMoveValue > 0)
             cout << "AI landed on you, sending you back to 0.\n";
 
-        Roll3(d0, d1, d2);
+        Roll3(die1, die2, die3);
     }
 
     return 0;
