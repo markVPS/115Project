@@ -18,25 +18,26 @@ struct GameState
     int playerIndex, aiIndex;
 };
 
-// -----------------------------------------------------------------------------
-// EvaluateState
-// -------------
-// Scoring function from the AI's point of view.
-// - Large positive value: good for AI
-// - Large negative value: good for player
-//
-// Logic:
-//   1. Check terminal states (win/loss).
-//   2. Otherwise, compare how far along the track each player is.
-//   3. Add a bonus if the player has been knocked back to 0 and the AI hasn't.
-// -----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
+ EvaluateState
+ -------------
+ Scoring function from the AI's point of view.
+ - Large positive value: good for AI
+ - Large negative value: good for player
+
+ Logic:
+   1. Check terminal states (win/loss).
+   2. Otherwise, compare how far along the track each player is.
+   3. Add a bonus if the player has been knocked back to 0 and the AI hasn't.
+ -----------------------------------------------------------------------------*/
 int EvaluateState(const GameState &state)
 {
-    // Terminal: AI win / Player win dominate everything else
+    // srand((unsigned int)time(nullptr));
+    //  Terminal: AI win / Player win dominate everything else
     if (state.aiIndex >= 40)
-        return 10000;   // AI has reached or passed goal
+        return 10000; // AI has reached or passed goal
     if (state.playerIndex >= 40)
-        return -10000;  // Player has reached or passed goal
+        return -10000; // Player has reached or passed goal
 
     // Base score: who is ahead on the board
     int score = state.aiIndex - state.playerIndex;
@@ -48,25 +49,25 @@ int EvaluateState(const GameState &state)
     return score;
 }
 
-// -----------------------------------------------------------------------------
-// ApplyMove
-// ---------
-// Simulates applying a move to either the AI or the player.
-//
-// Parameters:
-//   - currentState : original game state (not modified)
-//   - moveValue    : how many tiles to move
-//   - aiMoving     : true if AI is moving, false if player is moving
-//
-// Behavior:
-//   - Update the correct index (playerIndex or aiIndex).
-//   - Clamp position at 40 (the goal).
-//   - Handle collisions:
-//       * If AI moves onto the player, player goes back to 0.
-//       * If player moves onto the AI, AI goes back to 0.
-//   - Return the new GameState.
-// -----------------------------------------------------------------------------
-GameState ApplyMove(const GameState &currentState, int moveValue, bool aiMoving)
+/* -----------------------------------------------------------------------------
+ TraverseOptions
+ ---------
+ Simulates applying a move to either the AI or the player.
+
+ Parameters:
+   - currentState : original game state (not modified)
+   - moveValue    : how many tiles to move
+   - aiMoving     : true if AI is moving, false if player is moving
+
+ Behavior:
+   - Update the correct index (playerIndex or aiIndex).
+   - Clamp position at 40 (the goal).
+   - Handle collisions:
+       * If AI moves onto the player, player goes back to 0.
+       * If player moves onto the AI, AI goes back to 0.
+   - Return the new GameState.
+-----------------------------------------------------------------------------*/
+GameState TraverseOptions(const GameState &currentState, int moveValue, bool aiMoving)
 {
     // Copy state so we do not modify the original directly
     GameState nextState = currentState;
@@ -221,7 +222,7 @@ int main()
         int optionNumber = 1;
         for (int row = 0; row < 3; ++row)
         {
-            cout << "[" << optionNumber     << "] ∧: " << bitwiseGrid[row][0]
+            cout << "[" << optionNumber << "] ∧: " << bitwiseGrid[row][0]
                  << "     [" << optionNumber + 1 << "] ∨: " << bitwiseGrid[row][1]
                  << "     [" << optionNumber + 2 << "] ⊕: " << bitwiseGrid[row][2] << "\n";
 
@@ -239,11 +240,11 @@ int main()
             cout << "Your move (1–9): ";
             string input;
             if (!getline(cin, input))
-                return 0;  // handle EOF or input failure gracefully
+                return 0; // handle EOF or input failure gracefully
 
             if (!input.empty() && input[0] >= '1' && input[0] <= '9')
             {
-                choice = input[0] - '0';  // convert char digit to int
+                choice = input[0] - '0'; // convert char digit to int
                 break;
             }
             cout << "Invalid input. Try again.\n";
@@ -264,7 +265,7 @@ int main()
         // Apply the player's move using our state transition function
         GameState currentState{playerIndex, aiIndex};
 
-        currentState = ApplyMove(currentState, moveValue, false);
+        currentState = TraverseOptions(currentState, moveValue, false);
         playerIndex = currentState.playerIndex;
         aiIndex = currentState.aiIndex;
 
@@ -290,15 +291,27 @@ int main()
         BuildDieGrid(die1, die2, die3, bitwiseGrid);
 
         cout << "AI dice: " << die1 << ", " << die2 << ", " << die3 << "\n";
+        // Print all 9 options with labels [1]..[9]
+        optionNumber = 1;
+        for (int row = 0; row < 3; ++row)
+        {
+            cout << "[" << optionNumber << "] ∧: " << bitwiseGrid[row][0]
+                 << "     [" << optionNumber + 1 << "] ∨: " << bitwiseGrid[row][1]
+                 << "     [" << optionNumber + 2 << "] ⊕: " << bitwiseGrid[row][2] << "\n";
+
+            optionNumber += 3;
+        }
+
+        cout << "\n";
         PrintBoard(playerIndex, aiIndex);
 
         // Pause briefly so the player can see the AI's dice and board state
         this_thread::sleep_for(chrono::seconds(5));
 
         // Expectiminimax search variables
-        long long nodeCount = 0;             // number of simulated states visited
-        double bestExpectedValue = -1e18;    // best expected utility found so far
-        int aiMoveValue = 0;                 // move value associated with that utility
+        long long nodeCount = 0;         // number of simulated states visited
+        double bestExpectedValue = -1e8; // best expected utility found so far
+        int aiMoveValue = 0;             // move value associated with that utility
 
         // Root state for AI's decision: capture current positions
         GameState rootState{playerIndex, aiIndex};
@@ -314,7 +327,7 @@ int main()
                     continue; // Skip unusable moves (AND/XOR may produce 0)
 
                 // Apply the AI move to produce the next game state
-                GameState afterAI = ApplyMove(rootState, candidateMove, true);
+                GameState afterAI = TraverseOptions(rootState, candidateMove, true);
                 nodeCount++; // Count this node in the search
 
                 double expectedValue; // Expected value of choosing this move
@@ -362,7 +375,7 @@ int main()
                                             continue; // Can't move zero distance
 
                                         // Player applies this move
-                                        GameState childState = ApplyMove(afterAI, playerMoveValue, false);
+                                        GameState childState = TraverseOptions(afterAI, playerMoveValue, false);
                                         nodeCount++; // Count search node
 
                                         double evaluationValue = (double)EvaluateState(childState);
@@ -403,7 +416,7 @@ int main()
                 }
 
                 // Update best move if this expected value is higher
-                if (expectedValue > bestExpectedValue)
+                if (expectedValue > bestExpectedValue && (rand() % 2) == 1)
                 {
                     bestExpectedValue = expectedValue;
                     aiMoveValue = candidateMove;
@@ -423,7 +436,7 @@ int main()
         // Apply the chosen AI move to the real game state
         GameState afterAI{playerIndex, aiIndex};
 
-        afterAI = ApplyMove(afterAI, aiMoveValue, true);
+        afterAI = TraverseOptions(afterAI, aiMoveValue, true);
         playerIndex = afterAI.playerIndex;
         aiIndex = afterAI.aiIndex;
 
