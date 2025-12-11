@@ -10,16 +10,15 @@ using namespace std;
 
 // -----------------------------------------------------------------------------
 // GameState: minimal representation of the board
-// - playerIndex: current tile for the human player
-// - aiIndex:     current tile for the AI
+// playerIndex: current tile for the human player
+// aiIndex:     current tile for the AI
 // -----------------------------------------------------------------------------
 struct GameState
 {
     int playerIndex, aiIndex;
 };
 
-/* -----------------------------------------------------------------------------
- EvaluateState
+/* EvaluateState
  -------------
  Scoring function from the AI's point of view.
  - Large positive value: good for AI
@@ -29,7 +28,7 @@ struct GameState
    1. Check terminal states (win/loss).
    2. Otherwise, compare how far along the track each player is.
    3. Add a bonus if the player has been knocked back to 0 and the AI hasn't.
- -----------------------------------------------------------------------------*/
+*/
 int EvaluateState(const GameState &state)
 {
     // srand((unsigned int)time(nullptr));
@@ -49,8 +48,7 @@ int EvaluateState(const GameState &state)
     return score;
 }
 
-/* -----------------------------------------------------------------------------
- TraverseOptions
+/* TraverseOptions
  ---------
  Simulates applying a move to either the AI or the player.
 
@@ -66,7 +64,7 @@ int EvaluateState(const GameState &state)
        * If AI moves onto the player, player goes back to 0.
        * If player moves onto the AI, AI goes back to 0.
    - Return the new GameState.
------------------------------------------------------------------------------*/
+*/
 GameState TraverseOptions(const GameState &currentState, int moveValue, bool aiMoving)
 {
     // Copy state so we do not modify the original directly
@@ -316,6 +314,8 @@ int main()
         // Root state for AI's decision: capture current positions
         GameState rootState{playerIndex, aiIndex};
 
+        int chance = (rand() % 2);
+
         // Loop over all 9 possible AI moves in the 3×3 bitwise grid
         for (int aiRow = 0; aiRow < 3; ++aiRow)
         {
@@ -323,8 +323,6 @@ int main()
             {
                 // Candidate move value from the bitwise grid
                 int candidateMove = bitwiseGrid[aiRow][aiCol];
-                if (candidateMove <= 0)
-                    continue; // Skip unusable moves (AND/XOR may produce 0)
 
                 // Apply the AI move to produce the next game state
                 GameState afterAI = TraverseOptions(rootState, candidateMove, true);
@@ -371,8 +369,6 @@ int main()
                                     for (int playerCol = 0; playerCol < 3; playerCol++)
                                     {
                                         int playerMoveValue = playerGrid[playerRow][playerCol];
-                                        if (playerMoveValue <= 0)
-                                            continue; // Can't move zero distance
 
                                         // Player applies this move
                                         GameState childState = TraverseOptions(afterAI, playerMoveValue, false);
@@ -415,8 +411,8 @@ int main()
                     }
                 }
 
-                // Update best move if this expected value is higher
-                if (expectedValue > bestExpectedValue && (rand() % 2) == 1)
+                // Update best move if this expected value is higher and random number is greater than 0
+                if (expectedValue > bestExpectedValue && chance > 0)
                 {
                     bestExpectedValue = expectedValue;
                     aiMoveValue = candidateMove;
@@ -424,12 +420,50 @@ int main()
             }
         }
 
-        // Report how many nodes the Expectiminimax search explored
-        cout << "Expectiminimax: " << nodeCount << " nodes evaluated\n";
+        /// -----------------------------------------------
+        /// After Expectiminimax: choose AI move
+        /// 50% chance = optimal move
+        /// 50% chance = random move
+        /// -----------------------------------------------
 
-        // Ensure AI moves at least one tile (fallback)
-        if (aiMoveValue <= 0)
-            aiMoveValue = 1;
+        cout << "Expectiminimax: " << nodeCount << "nodes evaluated\n";
+
+        /// Store the optimal move chosen by Expectiminimax.
+        /// This is ALWAYS valid at this point because we no longer filter 0-values.
+        int optimalMove = aiMoveValue;
+
+        /// Collect ALL moves from the 3×3 grid, including 0-values.
+        /// We now ALWAYS populate 9 entries, so moveCount can never be 0.
+        int legalMoves[9];
+        int moveCount = 0;
+
+        for (int r = 0; r < 3; r++)
+        {
+            for (int c = 0; c < 3; c++)
+            {
+                /// Every bitwise result (even 0) is a valid move.
+                legalMoves[moveCount++] = bitwiseGrid[r][c];
+            }
+        }
+
+        /// -----------------------------------------------
+        /// 50% chance to choose optimal move
+        /// 50% chance to choose a random move from the grid
+        /// -----------------------------------------------
+        int coin = rand() % 2; // 0 or 1
+
+        if (coin == 0)
+        {
+            /// Random move from the full list (may be 0)
+            aiMoveValue = legalMoves[rand() % moveCount];
+            cout << "(Random choice) ";
+        }
+        else
+        {
+            /// Use the best move found by Expectiminimax
+            aiMoveValue = optimalMove;
+            cout << "(Optimal choice) ";
+        }
 
         cout << "AI chooses move value: " << aiMoveValue << "\n";
 
